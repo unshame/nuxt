@@ -1,8 +1,7 @@
 import { createRenderer, renderResourceHeaders } from 'vue-bundle-renderer/runtime'
 import type { RenderResponse } from 'nitropack'
 import type { Manifest } from 'vite'
-import type { H3Event } from 'h3'
-import { appendHeader, createError, getQuery, readBody, writeEarlyHints } from 'h3'
+import { H3Event, appendHeader, createError, getQuery, readBody, writeEarlyHints } from 'h3'
 import devalue from '@nuxt/devalue'
 import { stringify, uneval } from 'devalue'
 import destr from 'destr'
@@ -160,7 +159,7 @@ async function getIslandContext (event: H3Event): Promise<NuxtIslandContext> {
   return ctx
 }
 
-const PAYLOAD_CACHE = (process.env.NUXT_PAYLOAD_EXTRACTION && process.env.prerender) ? new Map() : null // TODO: Use LRU cache
+const PAYLOAD_CACHE = process.env.NUXT_PAYLOAD_EXTRACTION ? new Map() : null // TODO: Use LRU cache
 const ISLAND_CACHE = (process.env.NUXT_COMPONENT_ISLANDS && process.env.prerender) ? new Map() : null // TODO: Use LRU cache
 const PAYLOAD_URL_RE = process.env.NUXT_JSON_PAYLOADS ? /\/_payload(\.[a-zA-Z0-9]+)?.json(\?.*)?$/ : /\/_payload(\.[a-zA-Z0-9]+)?.js(\?.*)?$/
 const ROOT_NODE_REGEX = new RegExp(`^<${appRootTag} id="${appRootId}">([\\s\\S]*)</${appRootTag}>$`)
@@ -202,8 +201,11 @@ export default defineRenderHandler(async (event) => {
   const isRenderingPayload = PAYLOAD_URL_RE.test(url)
   if (isRenderingPayload) {
     url = url.substring(0, url.lastIndexOf('/')) || '/'
+
+    // Modifying the event!
     event.node.req.url = url
-    if (process.env.prerender && PAYLOAD_CACHE!.has(url)) {
+
+    if (PAYLOAD_CACHE!.has(url)) {
       return PAYLOAD_CACHE!.get(url)
     }
   }
@@ -228,10 +230,22 @@ export default defineRenderHandler(async (event) => {
     islandContext
   }
 
+  if (isRenderingPayload && !process.env.prerender) {
+    // The url was modified in the previous `if isRenderingPayload` block,
+    // so a new event is needed to avoid getting the cached rules for the wrong url
+    const needsPayload = getRouteRules(new H3Event(event.node.req, event.node.res)).prerender
+
+    // Render empty payload
+    if (!needsPayload) {
+      return renderPayloadResponseCached(url, ssrContext)
+    }
+  }
+
   // Whether we are prerendering route
-  const _PAYLOAD_EXTRACTION = process.env.prerender && process.env.NUXT_PAYLOAD_EXTRACTION && !ssrContext.noSSR
+  const shouldPrerenderRoute = routeOptions.prerender || process.env.prerender
+  const _PAYLOAD_EXTRACTION = shouldPrerenderRoute && process.env.NUXT_PAYLOAD_EXTRACTION && !ssrContext.noSSR
   const payloadURL = _PAYLOAD_EXTRACTION ? joinURL(useRuntimeConfig().app.baseURL, url, process.env.NUXT_JSON_PAYLOADS ? '_payload.json' : '_payload.js') : undefined
-  if (process.env.prerender) {
+  if (shouldPrerenderRoute) {
     ssrContext.payload.prerenderedAt = Date.now()
   }
 
@@ -261,18 +275,14 @@ export default defineRenderHandler(async (event) => {
 
   // Directly render payload routes
   if (isRenderingPayload) {
-    const response = renderPayloadResponse(ssrContext)
-    if (process.env.prerender) {
-      PAYLOAD_CACHE!.set(url, response)
-    }
-    return response
+    return renderPayloadResponseCached(url, ssrContext)
   }
 
   if (_PAYLOAD_EXTRACTION) {
     // Hint nitro to prerender payload for this route
     appendHeader(event, 'x-nitro-prerender', joinURL(url, process.env.NUXT_JSON_PAYLOADS ? '_payload.json' : '_payload.js'))
     // Use same ssr context to generate payload for this route
-    PAYLOAD_CACHE!.set(withoutTrailingSlash(url), renderPayloadResponse(ssrContext))
+    renderPayloadResponseCached(withoutTrailingSlash(url), ssrContext)
   }
 
   // Render meta
@@ -436,6 +446,12 @@ async function renderInlineStyles (usedModules: Set<string> | string[]) {
   return Array.from(inlinedStyles).join('')
 }
 
+function renderPayloadResponseCached (url: string, ssrContext: NuxtSSRContext): RenderResponse {
+  const response = renderPayloadResponse(ssrContext)
+  PAYLOAD_CACHE!.set(url, response)
+  return response
+}
+
 function renderPayloadResponse (ssrContext: NuxtSSRContext) {
   return <RenderResponse> {
     body: process.env.NUXT_JSON_PAYLOADS
@@ -464,7 +480,7 @@ function renderPayloadJsonScript (opts: { id: string, ssrContext: NuxtSSRContext
 
 function renderPayloadScript (opts: { ssrContext: NuxtSSRContext, data?: any, src?: string }) {
   opts.data.config = opts.ssrContext.config
-  const _PAYLOAD_EXTRACTION = process.env.prerender && process.env.NUXT_PAYLOAD_EXTRACTION && !opts.ssrContext.noSSR
+  const _PAYLOAD_EXTRACTION = process.env.NUXT_PAYLOAD_EXTRACTION && opts.src && !opts.ssrContext.noSSR
   if (_PAYLOAD_EXTRACTION) {
     return `<script type="module">import p from "${opts.src}";window.__NUXT__={...p,...(${devalue(opts.data)})}</script>`
   }

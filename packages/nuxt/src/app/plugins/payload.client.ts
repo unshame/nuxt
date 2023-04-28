@@ -1,16 +1,13 @@
 import { parseURL } from 'ufo'
 import { defineNuxtPlugin } from '#app/nuxt'
-import { isPrerendered, loadPayload } from '#app/composables/payload'
+import { loadPayload } from '#app/composables/payload'
 import { useRouter } from '#app/composables/router'
 
 export default defineNuxtPlugin({
   name: 'nuxt:payload',
   setup (nuxtApp) {
-    // Only enable behavior if initial page is prerendered
-    // TODO: Support hybrid and dev
-    if (!isPrerendered()) {
-      return
-    }
+    // TODO: Support dev
+    // TODO: in hybrid mode, don't fetch payloads for routes which are not prerendered
 
     // Load payload into cache
     nuxtApp.hooks.hook('link:prefetch', async (url) => {

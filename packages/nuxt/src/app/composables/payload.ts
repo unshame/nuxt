@@ -66,12 +66,6 @@ async function _importPayload (payloadURL: string) {
   return null
 }
 
-export function isPrerendered () {
-  // Note: Alternative for server is checking x-nitro-prerender header
-  const nuxtApp = useNuxtApp()
-  return !!nuxtApp.payload.prerenderedAt
-}
-
 let payloadCache: any = null
 export async function getNuxtClientPayload () {
   if (process.server) {
